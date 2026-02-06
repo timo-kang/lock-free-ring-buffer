@@ -253,6 +253,48 @@ static void BM_Typed_MPSC_RobotState(benchmark::State& state) {
   state.SetItemsProcessed(state.iterations() * producers);
 }
 
+static void BM_Typed_MPSC_RobotState_Burst(benchmark::State& state) {
+  auto& ring = ring_typed_robot();
+  const int producers = static_cast<int>(state.threads()) - 1;
+  const int burst = static_cast<int>(state.range(0));
+  RobotState state_msg{};
+  state_msg.tick = 123;
+  state_msg.id = 7;
+  state_msg.mode = 2;
+  state_msg.position[0] = 1.0;
+  state_msg.position[1] = 2.0;
+  state_msg.position[2] = 3.0;
+  state_msg.velocity[0] = 0.1;
+  state_msg.velocity[1] = 0.2;
+  state_msg.velocity[2] = 0.3;
+  for (int i = 0; i < 32; ++i) {
+    state_msg.joints[i] = static_cast<float>(i);
+  }
+
+  if (state.thread_index() == 0) {
+    lfring::TypedMessageReader<lfring::SharedRingBuffer> reader(ring);
+    RobotState out{};
+    for (auto _ : state) {
+      for (int i = 0; i < producers * burst; ++i) {
+        while (!reader.try_pop(out)) {
+          benchmark::DoNotOptimize(out.tick);
+        }
+      }
+    }
+  } else {
+    lfring::TypedMessageWriter<lfring::SharedRingBuffer> writer(ring);
+    for (auto _ : state) {
+      for (int i = 0; i < burst; ++i) {
+        while (!writer.try_push(state_msg)) {
+          benchmark::DoNotOptimize(state_msg.tick);
+        }
+      }
+    }
+  }
+
+  state.SetItemsProcessed(state.iterations() * producers * burst);
+}
+
 static void BM_Ring_MPSC_Variable(benchmark::State& state) {
   auto& ring = ring_large();
   std::array<std::size_t, 4> sizes = {64, 256, 1024, 4096};
@@ -313,6 +355,7 @@ BENCHMARK(BM_Ring_MPSC_Small)->ThreadRange(2, 8)->UseRealTime();
 BENCHMARK(BM_Typed_MPSC_Trivial)->ThreadRange(2, 8)->UseRealTime();
 BENCHMARK(BM_Typed_MPSC_String)->ThreadRange(2, 8)->UseRealTime();
 BENCHMARK(BM_Typed_MPSC_RobotState)->ThreadRange(2, 8)->UseRealTime();
+BENCHMARK(BM_Typed_MPSC_RobotState_Burst)->ThreadRange(2, 8)->Arg(1)->Arg(8)->Arg(32)->Arg(128)->UseRealTime();
 BENCHMARK(BM_Ring_MPSC_Variable)->ThreadRange(2, 8)->UseRealTime();
 BENCHMARK(BM_Locked_MPSC_Small)->ThreadRange(2, 8)->UseRealTime();
 
