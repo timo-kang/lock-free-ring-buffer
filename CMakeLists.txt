@@ -43,6 +43,7 @@ if (LF_RING_BUILD_TESTS)
 
   add_executable(lf_ring_tests
     tests/test_ring_buffer.cpp
+    tests/test_typed_message.cpp
   )
   target_link_libraries(lf_ring_tests PRIVATE lf_ring gtest_main)
 

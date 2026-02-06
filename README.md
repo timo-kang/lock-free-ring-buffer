@@ -60,6 +60,37 @@ int main() {
 }
 ```
 
+## Typed Messages
+Typed helpers wrap the raw byte API. Define a message type ID and use the writer/reader:
+```cpp
+#include "lf_ring/shared_ring_buffer.hpp"
+#include "lf_ring/typed_message.hpp"
+
+struct PriceUpdate {
+  uint32_t id;
+  double price;
+};
+
+namespace lfring {
+template <>
+struct MessageType<PriceUpdate> {
+  static constexpr bool defined = true;
+  static constexpr uint16_t value = 42;
+};
+} // namespace lfring
+
+int main() {
+  auto ring = lfring::SharedRingBuffer::create("/tmp/lfring.bin", 1 << 20);
+  lfring::TypedMessageWriter<lfring::SharedRingBuffer> writer(ring);
+  lfring::TypedMessageReader<lfring::SharedRingBuffer> reader(ring);
+
+  writer.try_push(PriceUpdate{7, 99.5});
+
+  PriceUpdate out{};
+  reader.try_pop(out);
+}
+```
+
 ## Tests
 ```bash
 ctest --test-dir build

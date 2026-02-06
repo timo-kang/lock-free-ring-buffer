@@ -1,4 +1,5 @@
 #include "lf_ring/shared_ring_buffer.hpp"
+#include "lf_ring/typed_message.hpp"
 
 #include <benchmark/benchmark.h>
 
@@ -9,6 +10,7 @@
 #include <filesystem>
 #include <mutex>
 #include <queue>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -67,6 +69,24 @@ lfring::SharedRingBuffer& ring_large() {
   return ring;
 }
 
+lfring::SharedRingBuffer& ring_typed_small() {
+  static TempFile tmp("lfring_bench_typed_small");
+  static lfring::SharedRingBuffer ring = lfring::SharedRingBuffer::create(tmp.path, 1 << 20);
+  return ring;
+}
+
+lfring::SharedRingBuffer& ring_typed_string() {
+  static TempFile tmp("lfring_bench_typed_string");
+  static lfring::SharedRingBuffer ring = lfring::SharedRingBuffer::create(tmp.path, 2 << 20);
+  return ring;
+}
+
+lfring::SharedRingBuffer& ring_typed_robot() {
+  static TempFile tmp("lfring_bench_typed_robot");
+  static lfring::SharedRingBuffer ring = lfring::SharedRingBuffer::create(tmp.path, 4 << 20);
+  return ring;
+}
+
 LockedQueue& locked_queue() {
   static LockedQueue queue;
   return queue;
@@ -78,7 +98,39 @@ std::vector<std::byte> make_payload(std::size_t size) {
   return data;
 }
 
+struct Tick {
+  std::uint64_t seq;
+  double value;
+};
+
+struct RobotState {
+  std::uint64_t tick;
+  std::uint32_t id;
+  std::uint32_t mode;
+  double position[3];
+  double velocity[3];
+  float joints[32];
+};
+
 } // namespace
+
+namespace lfring {
+
+template <>
+struct MessageType<Tick> {
+  static constexpr bool defined = true;
+  static constexpr std::uint16_t value = 77;
+};
+
+template <>
+struct MessageType<RobotState> {
+  static constexpr bool defined = true;
+  static constexpr std::uint16_t value = 78;
+};
+
+} // namespace
+
+namespace {
 
 static void BM_Ring_MPSC_Small(benchmark::State& state) {
   auto& ring = ring_small();
@@ -99,6 +151,101 @@ static void BM_Ring_MPSC_Small(benchmark::State& state) {
     for (auto _ : state) {
       while (!ring.try_push(payload, 1)) {
         benchmark::DoNotOptimize(payload.data());
+      }
+    }
+  }
+
+  state.SetItemsProcessed(state.iterations() * producers);
+}
+
+static void BM_Typed_MPSC_Trivial(benchmark::State& state) {
+  auto& ring = ring_typed_small();
+  const int producers = static_cast<int>(state.threads()) - 1;
+  const Tick tick{42, 123.5};
+
+  if (state.thread_index() == 0) {
+    lfring::TypedMessageReader<lfring::SharedRingBuffer> reader(ring);
+    Tick out{};
+    for (auto _ : state) {
+      for (int i = 0; i < producers; ++i) {
+        while (!reader.try_pop(out)) {
+          benchmark::DoNotOptimize(out.seq);
+          benchmark::DoNotOptimize(out.value);
+        }
+      }
+    }
+  } else {
+    lfring::TypedMessageWriter<lfring::SharedRingBuffer> writer(ring);
+    for (auto _ : state) {
+      while (!writer.try_push(tick)) {
+        benchmark::DoNotOptimize(tick.seq);
+        benchmark::DoNotOptimize(tick.value);
+      }
+    }
+  }
+
+  state.SetItemsProcessed(state.iterations() * producers);
+}
+
+static void BM_Typed_MPSC_String(benchmark::State& state) {
+  auto& ring = ring_typed_string();
+  const int producers = static_cast<int>(state.threads()) - 1;
+  const std::string payload(256, 'x');
+
+  if (state.thread_index() == 0) {
+    lfring::TypedMessageReader<lfring::SharedRingBuffer> reader(ring);
+    std::string out;
+    for (auto _ : state) {
+      for (int i = 0; i < producers; ++i) {
+        while (!reader.try_pop_typed(88, out)) {
+          benchmark::DoNotOptimize(out.data());
+        }
+      }
+    }
+  } else {
+    lfring::TypedMessageWriter<lfring::SharedRingBuffer> writer(ring);
+    for (auto _ : state) {
+      while (!writer.try_push_typed(payload, 88)) {
+        benchmark::DoNotOptimize(payload.data());
+      }
+    }
+  }
+
+  state.SetItemsProcessed(state.iterations() * producers);
+}
+
+static void BM_Typed_MPSC_RobotState(benchmark::State& state) {
+  auto& ring = ring_typed_robot();
+  const int producers = static_cast<int>(state.threads()) - 1;
+  RobotState state_msg{};
+  state_msg.tick = 123;
+  state_msg.id = 7;
+  state_msg.mode = 2;
+  state_msg.position[0] = 1.0;
+  state_msg.position[1] = 2.0;
+  state_msg.position[2] = 3.0;
+  state_msg.velocity[0] = 0.1;
+  state_msg.velocity[1] = 0.2;
+  state_msg.velocity[2] = 0.3;
+  for (int i = 0; i < 32; ++i) {
+    state_msg.joints[i] = static_cast<float>(i);
+  }
+
+  if (state.thread_index() == 0) {
+    lfring::TypedMessageReader<lfring::SharedRingBuffer> reader(ring);
+    RobotState out{};
+    for (auto _ : state) {
+      for (int i = 0; i < producers; ++i) {
+        while (!reader.try_pop(out)) {
+          benchmark::DoNotOptimize(out.tick);
+        }
+      }
+    }
+  } else {
+    lfring::TypedMessageWriter<lfring::SharedRingBuffer> writer(ring);
+    for (auto _ : state) {
+      while (!writer.try_push(state_msg)) {
+        benchmark::DoNotOptimize(state_msg.tick);
       }
     }
   }
@@ -160,7 +307,12 @@ static void BM_Locked_MPSC_Small(benchmark::State& state) {
   state.SetItemsProcessed(state.iterations() * producers);
 }
 
+} // namespace
+
 BENCHMARK(BM_Ring_MPSC_Small)->ThreadRange(2, 8)->UseRealTime();
+BENCHMARK(BM_Typed_MPSC_Trivial)->ThreadRange(2, 8)->UseRealTime();
+BENCHMARK(BM_Typed_MPSC_String)->ThreadRange(2, 8)->UseRealTime();
+BENCHMARK(BM_Typed_MPSC_RobotState)->ThreadRange(2, 8)->UseRealTime();
 BENCHMARK(BM_Ring_MPSC_Variable)->ThreadRange(2, 8)->UseRealTime();
 BENCHMARK(BM_Locked_MPSC_Small)->ThreadRange(2, 8)->UseRealTime();
 
