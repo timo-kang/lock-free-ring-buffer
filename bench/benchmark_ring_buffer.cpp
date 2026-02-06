@@ -155,7 +155,9 @@ static void BM_Ring_MPSC_Small(benchmark::State& state) {
     }
   }
 
-  state.SetItemsProcessed(state.iterations() * producers);
+  if (state.thread_index() == 0) {
+    state.SetItemsProcessed(state.iterations() * producers);
+  }
 }
 
 static void BM_Typed_MPSC_Trivial(benchmark::State& state) {
@@ -184,7 +186,9 @@ static void BM_Typed_MPSC_Trivial(benchmark::State& state) {
     }
   }
 
-  state.SetItemsProcessed(state.iterations() * producers);
+  if (state.thread_index() == 0) {
+    state.SetItemsProcessed(state.iterations() * producers);
+  }
 }
 
 static void BM_Typed_MPSC_String(benchmark::State& state) {
@@ -211,7 +215,9 @@ static void BM_Typed_MPSC_String(benchmark::State& state) {
     }
   }
 
-  state.SetItemsProcessed(state.iterations() * producers);
+  if (state.thread_index() == 0) {
+    state.SetItemsProcessed(state.iterations() * producers);
+  }
 }
 
 static void BM_Typed_MPSC_RobotState(benchmark::State& state) {
@@ -250,7 +256,9 @@ static void BM_Typed_MPSC_RobotState(benchmark::State& state) {
     }
   }
 
-  state.SetItemsProcessed(state.iterations() * producers);
+  if (state.thread_index() == 0) {
+    state.SetItemsProcessed(state.iterations() * producers);
+  }
 }
 
 static void BM_Typed_MPSC_RobotState_Burst(benchmark::State& state) {
@@ -292,7 +300,9 @@ static void BM_Typed_MPSC_RobotState_Burst(benchmark::State& state) {
     }
   }
 
-  state.SetItemsProcessed(state.iterations() * producers * burst);
+  if (state.thread_index() == 0) {
+    state.SetItemsProcessed(state.iterations() * producers * burst);
+  }
 }
 
 static void BM_Ring_MPSC_Variable(benchmark::State& state) {
@@ -323,7 +333,9 @@ static void BM_Ring_MPSC_Variable(benchmark::State& state) {
     }
   }
 
-  state.SetItemsProcessed(state.iterations() * producers);
+  if (state.thread_index() == 0) {
+    state.SetItemsProcessed(state.iterations() * producers);
+  }
 }
 
 static void BM_Locked_MPSC_Small(benchmark::State& state) {
@@ -346,7 +358,9 @@ static void BM_Locked_MPSC_Small(benchmark::State& state) {
     }
   }
 
-  state.SetItemsProcessed(state.iterations() * producers);
+  if (state.thread_index() == 0) {
+    state.SetItemsProcessed(state.iterations() * producers);
+  }
 }
 
 } // namespace
