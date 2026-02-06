@@ -98,6 +98,18 @@ std::vector<std::byte> make_payload(std::size_t size) {
   return data;
 }
 
+inline void SetBenchmarkCounters(benchmark::State& state, std::int64_t total_items, int producers) {
+  if (state.thread_index() != 0) {
+    return;
+  }
+  state.SetItemsProcessed(total_items);
+  if (producers > 0) {
+    state.counters["items_per_producer"] = benchmark::Counter(
+        static_cast<double>(total_items) / static_cast<double>(producers),
+        benchmark::Counter::kIsRate);
+  }
+}
+
 struct Tick {
   std::uint64_t seq;
   double value;
@@ -155,9 +167,7 @@ static void BM_Ring_MPSC_Small(benchmark::State& state) {
     }
   }
 
-  if (state.thread_index() == 0) {
-    state.SetItemsProcessed(state.iterations() * producers);
-  }
+  SetBenchmarkCounters(state, static_cast<std::int64_t>(state.iterations()) * producers, producers);
 }
 
 static void BM_Typed_MPSC_Trivial(benchmark::State& state) {
@@ -186,9 +196,7 @@ static void BM_Typed_MPSC_Trivial(benchmark::State& state) {
     }
   }
 
-  if (state.thread_index() == 0) {
-    state.SetItemsProcessed(state.iterations() * producers);
-  }
+  SetBenchmarkCounters(state, static_cast<std::int64_t>(state.iterations()) * producers, producers);
 }
 
 static void BM_Typed_MPSC_String(benchmark::State& state) {
@@ -215,9 +223,7 @@ static void BM_Typed_MPSC_String(benchmark::State& state) {
     }
   }
 
-  if (state.thread_index() == 0) {
-    state.SetItemsProcessed(state.iterations() * producers);
-  }
+  SetBenchmarkCounters(state, static_cast<std::int64_t>(state.iterations()) * producers, producers);
 }
 
 static void BM_Typed_MPSC_RobotState(benchmark::State& state) {
@@ -256,9 +262,7 @@ static void BM_Typed_MPSC_RobotState(benchmark::State& state) {
     }
   }
 
-  if (state.thread_index() == 0) {
-    state.SetItemsProcessed(state.iterations() * producers);
-  }
+  SetBenchmarkCounters(state, static_cast<std::int64_t>(state.iterations()) * producers, producers);
 }
 
 static void BM_Typed_MPSC_RobotState_Burst(benchmark::State& state) {
@@ -300,9 +304,7 @@ static void BM_Typed_MPSC_RobotState_Burst(benchmark::State& state) {
     }
   }
 
-  if (state.thread_index() == 0) {
-    state.SetItemsProcessed(state.iterations() * producers * burst);
-  }
+  SetBenchmarkCounters(state, static_cast<std::int64_t>(state.iterations()) * producers * burst, producers);
 }
 
 static void BM_Ring_MPSC_Variable(benchmark::State& state) {
@@ -333,9 +335,7 @@ static void BM_Ring_MPSC_Variable(benchmark::State& state) {
     }
   }
 
-  if (state.thread_index() == 0) {
-    state.SetItemsProcessed(state.iterations() * producers);
-  }
+  SetBenchmarkCounters(state, static_cast<std::int64_t>(state.iterations()) * producers, producers);
 }
 
 static void BM_Locked_MPSC_Small(benchmark::State& state) {
@@ -358,9 +358,7 @@ static void BM_Locked_MPSC_Small(benchmark::State& state) {
     }
   }
 
-  if (state.thread_index() == 0) {
-    state.SetItemsProcessed(state.iterations() * producers);
-  }
+  SetBenchmarkCounters(state, static_cast<std::int64_t>(state.iterations()) * producers, producers);
 }
 
 } // namespace
