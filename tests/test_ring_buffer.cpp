@@ -1,4 +1,5 @@
 #include "lf_ring/shared_ring_buffer.hpp"
+#include "lf_ring/shared_ring_buffer_mpmc.hpp"
 
 #include <gtest/gtest.h>
 
@@ -160,5 +161,82 @@ TEST(SharedRingBuffer, MPSCStress) {
 
   for (std::uint32_t i = 0; i < total; ++i) {
     ASSERT_EQ(seen[i], 1) << "missing id " << i;
+  }
+}
+
+TEST(SharedRingBufferMPMC, MPmcStress) {
+  TempFile tmp("lfring_mpmc");
+  auto ring = lfring::SharedRingBufferMPMC::create(tmp.path, 1 << 20);
+
+  struct Message {
+    std::uint32_t producer;
+    std::uint32_t sequence;
+  };
+
+  constexpr std::uint32_t producers = 4;
+  constexpr std::uint32_t consumers = 3;
+  constexpr std::uint32_t per_producer = 4000;
+  const std::uint32_t total = producers * per_producer;
+
+  std::atomic<std::uint32_t> produced{0};
+  std::atomic<std::uint32_t> consumed{0};
+  std::vector<std::atomic_uint8_t> seen(total);
+  for (auto& cell : seen) {
+    cell.store(0, std::memory_order_relaxed);
+  }
+
+  std::vector<std::thread> threads;
+  threads.reserve(producers + consumers);
+
+  for (std::uint32_t c = 0; c < consumers; ++c) {
+    threads.emplace_back([&] {
+      std::vector<std::byte> out;
+      std::uint16_t type = 0;
+      auto start = std::chrono::steady_clock::now();
+      while (consumed.load(std::memory_order_relaxed) < total) {
+        if (ring.try_pop(out, type)) {
+          if (out.size() == sizeof(Message)) {
+            Message msg{};
+            std::memcpy(&msg, out.data(), sizeof(Message));
+            std::uint32_t id = msg.producer * per_producer + msg.sequence;
+            if (id < total) {
+              seen[id].fetch_add(1, std::memory_order_relaxed);
+            }
+            consumed.fetch_add(1, std::memory_order_relaxed);
+          }
+        } else {
+          std::this_thread::yield();
+        }
+
+        auto now = std::chrono::steady_clock::now();
+        if (now - start > std::chrono::seconds(5)) {
+          break;
+        }
+      }
+    });
+  }
+
+  for (std::uint32_t p = 0; p < producers; ++p) {
+    threads.emplace_back([&, p] {
+      for (std::uint32_t i = 0; i < per_producer; ++i) {
+        Message msg{p, i};
+        std::span<const std::byte> data(reinterpret_cast<const std::byte*>(&msg), sizeof(msg));
+        while (!ring.try_push(data, 5)) {
+          std::this_thread::yield();
+        }
+        produced.fetch_add(1, std::memory_order_relaxed);
+      }
+    });
+  }
+
+  for (auto& t : threads) {
+    t.join();
+  }
+
+  ASSERT_EQ(produced.load(), total);
+  ASSERT_EQ(consumed.load(), total);
+
+  for (std::uint32_t i = 0; i < total; ++i) {
+    ASSERT_EQ(seen[i].load(std::memory_order_relaxed), 1u) << "missing or duplicate id " << i;
   }
 }

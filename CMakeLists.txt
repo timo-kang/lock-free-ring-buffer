@@ -13,6 +13,8 @@ include(CTest)
 
 add_library(lf_ring
   src/shared_ring_buffer.cpp
+  src/shared_ring_buffer_mpmc.cpp
+  src/shared_memory_mapping.cpp
 )
 
 target_include_directories(lf_ring PUBLIC include)

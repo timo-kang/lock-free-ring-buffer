@@ -11,16 +11,16 @@
 
 namespace lfring {
 
-class SharedRingBuffer {
+class SharedRingBufferMPMC {
 public:
-  static SharedRingBuffer create(const std::filesystem::path& path, std::size_t capacity_bytes);
-  static SharedRingBuffer open(const std::filesystem::path& path);
+  static SharedRingBufferMPMC create(const std::filesystem::path& path, std::size_t capacity_bytes);
+  static SharedRingBufferMPMC open(const std::filesystem::path& path);
 
-  SharedRingBuffer(SharedRingBuffer&& other) noexcept;
-  SharedRingBuffer& operator=(SharedRingBuffer&& other) noexcept;
-  SharedRingBuffer(const SharedRingBuffer&) = delete;
-  SharedRingBuffer& operator=(const SharedRingBuffer&) = delete;
-  ~SharedRingBuffer() = default;
+  SharedRingBufferMPMC(SharedRingBufferMPMC&& other) noexcept;
+  SharedRingBufferMPMC& operator=(SharedRingBufferMPMC&& other) noexcept;
+  SharedRingBufferMPMC(const SharedRingBufferMPMC&) = delete;
+  SharedRingBufferMPMC& operator=(const SharedRingBufferMPMC&) = delete;
+  ~SharedRingBufferMPMC() = default;
 
   bool try_push(const void* data, std::uint32_t size, std::uint16_t type);
   bool try_push(std::span<const std::byte> data, std::uint16_t type) {
@@ -37,9 +37,7 @@ public:
   }
 
 private:
-  explicit SharedRingBuffer(detail::Mapping mapping) : mapping_(std::move(mapping)) {}
-
-  bool try_pop_internal(std::vector<std::byte>& out, std::uint16_t& type);
+  explicit SharedRingBufferMPMC(detail::Mapping mapping) : mapping_(std::move(mapping)) {}
 
   detail::Mapping mapping_{};
 };
