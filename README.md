@@ -6,6 +6,7 @@ A C++20 lock-free ring buffer for shared-memory messaging. It supports **MPSC** 
 - MPSC lock-free ring buffer (shared memory via `mmap`).
 - MPMC lock-free ring buffer (shared memory via `mmap`).
 - Variable-size payloads with a small record header (`size`, `type`, `flags`).
+- Global monotonic sequence number per record (for loss detection / diagnostics).
 - Cache-line padded control block to reduce false sharing.
 - Unit tests (GoogleTest) and benchmarks (Google Benchmark).
 

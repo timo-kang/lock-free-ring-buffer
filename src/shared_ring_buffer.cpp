@@ -27,10 +27,16 @@ bool SharedRingBuffer::try_push(const void* data, std::uint32_t size, std::uint1
 }
 
 bool SharedRingBuffer::try_pop(std::vector<std::byte>& out, std::uint16_t& type) {
-  return try_pop_internal(out, type);
+  return try_pop_internal(out, type, nullptr);
 }
 
-bool SharedRingBuffer::try_pop_internal(std::vector<std::byte>& out, std::uint16_t& type) {
+bool SharedRingBuffer::try_pop(std::vector<std::byte>& out, std::uint16_t& type,
+                               std::uint64_t& sequence) {
+  return try_pop_internal(out, type, &sequence);
+}
+
+bool SharedRingBuffer::try_pop_internal(std::vector<std::byte>& out, std::uint16_t& type,
+                                        std::uint64_t* sequence) {
   for (;;) {
     std::uint64_t tail = mapping_.control->tail_publish.value.load(std::memory_order_acquire);
     std::uint64_t head = mapping_.control->head_publish.value.load(std::memory_order_relaxed);
@@ -78,6 +84,9 @@ bool SharedRingBuffer::try_pop_internal(std::vector<std::byte>& out, std::uint16
     }
 
     type = header->type;
+    if (sequence != nullptr) {
+      *sequence = header->sequence;
+    }
     head += record_size;
     mapping_.control->head_publish.value.store(head, std::memory_order_release);
     mapping_.control->head_reserve.value.store(head, std::memory_order_relaxed);

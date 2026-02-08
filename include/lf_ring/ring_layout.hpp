@@ -14,7 +14,7 @@ constexpr std::size_t kCacheLineSize = 64;
 
 constexpr std::size_t kAlignment = 8;
 constexpr std::uint32_t kMagic = 0x4C465242; // 'LFRB'
-constexpr std::uint16_t kVersion = 3;
+constexpr std::uint16_t kVersion = 4;
 constexpr std::uint16_t kWrapFlag = 0x1;
 constexpr std::uint64_t kFlagMPSC = 0x1;
 constexpr std::uint64_t kFlagMPMC = 0x2;
@@ -38,9 +38,10 @@ struct RecordHeader {
   std::uint32_t size;
   std::uint16_t type;
   std::uint16_t flags;
+  std::uint64_t sequence;
 };
 
-static_assert(sizeof(RecordHeader) == 8, "RecordHeader must be 8 bytes");
+static_assert(sizeof(RecordHeader) == 16, "RecordHeader must be 16 bytes");
 
 static_assert(kCacheLineSize >= sizeof(std::atomic<std::uint64_t>), "Cache line too small");
 
@@ -62,6 +63,7 @@ struct ControlBlock {
   PaddedAtomicU64 head_publish;
   PaddedAtomicU64 tail_reserve;
   PaddedAtomicU64 tail_publish;
+  PaddedAtomicU64 sequence;
 };
 
 inline std::size_t header_region_size() {

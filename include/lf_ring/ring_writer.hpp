@@ -64,6 +64,7 @@ inline bool try_push(ControlBlock* control, std::byte* ring, std::size_t capacit
       wrap->size = 0;
       wrap->type = 0;
       wrap->flags = kWrapFlag;
+      wrap->sequence = 0;
     }
     pos = 0;
   }
@@ -72,6 +73,7 @@ inline bool try_push(ControlBlock* control, std::byte* ring, std::size_t capacit
   header->size = size;
   header->type = type;
   header->flags = 0;
+  header->sequence = 0;
 
   if (size > 0) {
     std::memcpy(ring + pos + sizeof(RecordHeader), data, size);
@@ -82,6 +84,7 @@ inline bool try_push(ControlBlock* control, std::byte* ring, std::size_t capacit
   while (control->tail_publish.value.load(std::memory_order_acquire) != publish_at) {
     // wait for earlier producers to publish
   }
+  header->sequence = control->sequence.value.fetch_add(1, std::memory_order_relaxed) + 1;
   control->tail_publish.value.store(publish_to, std::memory_order_release);
   return true;
 }

@@ -134,6 +134,7 @@ Mapping create_mapping(const std::filesystem::path& path, std::size_t capacity_b
   control->head_publish.value.store(0, std::memory_order_relaxed);
   control->tail_reserve.value.store(0, std::memory_order_relaxed);
   control->tail_publish.value.store(0, std::memory_order_relaxed);
+  control->sequence.value.store(0, std::memory_order_relaxed);
 
   auto* ring = reinterpret_cast<std::byte*>(mapping) + header->ring_offset;
 

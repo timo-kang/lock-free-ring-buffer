@@ -26,6 +26,12 @@ bool SharedRingBufferMPMC::try_push(const void* data, std::uint32_t size, std::u
 }
 
 bool SharedRingBufferMPMC::try_pop(std::vector<std::byte>& out, std::uint16_t& type) {
+  std::uint64_t ignored = 0;
+  return try_pop(out, type, ignored);
+}
+
+bool SharedRingBufferMPMC::try_pop(std::vector<std::byte>& out, std::uint16_t& type,
+                                   std::uint64_t& sequence) {
   for (;;) {
     std::uint64_t tail = mapping_.control->tail_publish.value.load(std::memory_order_acquire);
     std::uint64_t head = mapping_.control->head_reserve.value.load(std::memory_order_relaxed);
@@ -100,6 +106,7 @@ bool SharedRingBufferMPMC::try_pop(std::vector<std::byte>& out, std::uint16_t& t
     }
 
     type = header->type;
+    sequence = header->sequence;
 
     while (mapping_.control->head_publish.value.load(std::memory_order_acquire) != head) {
     }

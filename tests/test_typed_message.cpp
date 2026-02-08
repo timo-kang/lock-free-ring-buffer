@@ -93,3 +93,20 @@ TEST(TypedMessage, VectorPayload) {
   ASSERT_TRUE(reader.try_pop_typed(9, out));
   ASSERT_EQ(out, values);
 }
+
+TEST(TypedMessage, SequenceNumbers) {
+  TempFile tmp("lfring_typed_seq");
+  auto ring = lfring::SharedRingBuffer::create(tmp.path, 4096);
+
+  lfring::TypedMessageWriter<lfring::SharedRingBuffer> writer(ring);
+  lfring::TypedMessageReader<lfring::SharedRingBuffer> reader(ring);
+
+  ASSERT_TRUE(writer.try_push_typed(std::string("a"), 7));
+  ASSERT_TRUE(writer.try_push_typed(std::string("b"), 7));
+
+  lfring::MessageView view{};
+  ASSERT_TRUE(reader.try_pop(view));
+  ASSERT_EQ(view.sequence, 1u);
+  ASSERT_TRUE(reader.try_pop(view));
+  ASSERT_EQ(view.sequence, 2u);
+}

@@ -90,6 +90,7 @@ struct MessageCodec<std::vector<T>, std::enable_if_t<std::is_trivially_copyable_
 
 struct MessageView {
   std::uint16_t type = 0;
+  std::uint64_t sequence = 0;
   std::span<const std::byte> payload{};
 };
 
@@ -132,10 +133,11 @@ public:
   explicit TypedMessageReader(Ring& ring) : ring_(ring) {}
 
   bool try_pop(MessageView& view) {
-    if (!ring_.try_pop(buffer_, type_)) {
+    if (!ring_.try_pop(buffer_, type_, sequence_)) {
       return false;
     }
     view.type = type_;
+    view.sequence = sequence_;
     view.payload = std::span<const std::byte>(buffer_.data(), buffer_.size());
     return true;
   }
@@ -175,6 +177,7 @@ private:
   Ring& ring_;
   std::vector<std::byte> buffer_;
   std::uint16_t type_ = 0;
+  std::uint64_t sequence_ = 0;
 };
 
 } // namespace lfring

@@ -28,6 +28,7 @@ public:
   }
 
   bool try_pop(std::vector<std::byte>& out, std::uint16_t& type);
+  bool try_pop(std::vector<std::byte>& out, std::uint16_t& type, std::uint64_t& sequence);
 
   std::size_t capacity() const noexcept { return mapping_.capacity; }
   std::size_t approx_size() const noexcept;

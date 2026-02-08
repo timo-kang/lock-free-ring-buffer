@@ -92,6 +92,45 @@ TEST(SharedRingBuffer, WrapAround) {
   }
 }
 
+TEST(SharedRingBuffer, SequenceNumbers) {
+  TempFile tmp("lfring_seq");
+  auto ring = lfring::SharedRingBuffer::create(tmp.path, 4096);
+
+  const char payload[] = "seq";
+  ASSERT_TRUE(ring.try_push(payload, sizeof(payload), 1));
+  ASSERT_TRUE(ring.try_push(payload, sizeof(payload), 1));
+  ASSERT_TRUE(ring.try_push(payload, sizeof(payload), 1));
+
+  std::vector<std::byte> out;
+  std::uint16_t type = 0;
+  std::uint64_t seq = 0;
+
+  ASSERT_TRUE(ring.try_pop(out, type, seq));
+  ASSERT_EQ(seq, 1u);
+  ASSERT_TRUE(ring.try_pop(out, type, seq));
+  ASSERT_EQ(seq, 2u);
+  ASSERT_TRUE(ring.try_pop(out, type, seq));
+  ASSERT_EQ(seq, 3u);
+}
+
+TEST(SharedRingBufferMPMC, SequenceNumbers) {
+  TempFile tmp("lfring_seq_mpmc");
+  auto ring = lfring::SharedRingBufferMPMC::create(tmp.path, 4096);
+
+  const char payload[] = "seq";
+  ASSERT_TRUE(ring.try_push(payload, sizeof(payload), 1));
+  ASSERT_TRUE(ring.try_push(payload, sizeof(payload), 1));
+
+  std::vector<std::byte> out;
+  std::uint16_t type = 0;
+  std::uint64_t seq = 0;
+
+  ASSERT_TRUE(ring.try_pop(out, type, seq));
+  ASSERT_EQ(seq, 1u);
+  ASSERT_TRUE(ring.try_pop(out, type, seq));
+  ASSERT_EQ(seq, 2u);
+}
+
 TEST(SharedRingBuffer, MPSCStress) {
   TempFile tmp("lfring_mpsc");
   auto ring = lfring::SharedRingBuffer::create(tmp.path, 1 << 20);
