@@ -1,4 +1,5 @@
 #include "lf_ring/shared_ring_buffer.hpp"
+#include "lf_ring/shared_latest.hpp"
 #include "lf_ring/typed_message.hpp"
 
 #include <benchmark/benchmark.h>
@@ -57,6 +58,20 @@ private:
   std::queue<std::vector<std::byte>> queue_;
 };
 
+struct Tick {
+  std::uint64_t seq;
+  double value;
+};
+
+struct RobotState {
+  std::uint64_t tick;
+  std::uint32_t id;
+  std::uint32_t mode;
+  double position[3];
+  double velocity[3];
+  float joints[32];
+};
+
 lfring::SharedRingBuffer& ring_small() {
   static TempFile tmp("lfring_bench_small");
   static lfring::SharedRingBuffer ring = lfring::SharedRingBuffer::create(tmp.path, 1 << 20);
@@ -87,6 +102,12 @@ lfring::SharedRingBuffer& ring_typed_robot() {
   return ring;
 }
 
+lfring::SharedLatest<RobotState>& latest_robot() {
+  static TempFile tmp("lfring_bench_latest_robot");
+  static lfring::SharedLatest<RobotState> latest = lfring::SharedLatest<RobotState>::create(tmp.path);
+  return latest;
+}
+
 LockedQueue& locked_queue() {
   static LockedQueue queue;
   return queue;
@@ -109,20 +130,6 @@ inline void SetBenchmarkCounters(benchmark::State& state, std::int64_t total_ite
         benchmark::Counter::kIsRate);
   }
 }
-
-struct Tick {
-  std::uint64_t seq;
-  double value;
-};
-
-struct RobotState {
-  std::uint64_t tick;
-  std::uint32_t id;
-  std::uint32_t mode;
-  double position[3];
-  double velocity[3];
-  float joints[32];
-};
 
 } // namespace
 
@@ -307,6 +314,98 @@ static void BM_Typed_MPSC_RobotState_Burst(benchmark::State& state) {
   SetBenchmarkCounters(state, static_cast<std::int64_t>(state.iterations()) * producers * burst, producers);
 }
 
+static void BM_Latest_RobotState_Write(benchmark::State& state) {
+  auto& latest = latest_robot();
+  RobotState msg{};
+  msg.tick = 123;
+  msg.id = 7;
+  msg.mode = 2;
+  msg.position[0] = 1.0;
+  msg.position[1] = 2.0;
+  msg.position[2] = 3.0;
+  msg.velocity[0] = 0.1;
+  msg.velocity[1] = 0.2;
+  msg.velocity[2] = 0.3;
+  for (int i = 0; i < 32; ++i) {
+    msg.joints[i] = static_cast<float>(i);
+  }
+
+  for (auto _ : state) {
+    msg.tick++;
+    latest.write(msg);
+    benchmark::DoNotOptimize(msg.tick);
+  }
+
+  state.SetItemsProcessed(static_cast<std::int64_t>(state.iterations()));
+}
+
+static void BM_Latest_RobotState_Read(benchmark::State& state) {
+  auto& latest = latest_robot();
+
+  RobotState seed{};
+  seed.tick = 123;
+  seed.id = 7;
+  seed.mode = 2;
+  for (int i = 0; i < 32; ++i) {
+    seed.joints[i] = static_cast<float>(i);
+  }
+  latest.write(seed);
+
+  RobotState out{};
+  std::int64_t ok = 0;
+  std::int64_t fail = 0;
+  for (auto _ : state) {
+    if (latest.try_read(out, 64)) {
+      ++ok;
+      benchmark::DoNotOptimize(out.tick);
+    } else {
+      ++fail;
+    }
+  }
+  state.SetItemsProcessed(ok);
+  state.counters["read_fail"] = static_cast<double>(fail);
+}
+
+static void BM_Latest_RobotState_RW(benchmark::State& state) {
+  auto& latest = latest_robot();
+
+  RobotState msg{};
+  msg.tick = 123;
+  msg.id = 7;
+  msg.mode = 2;
+  for (int i = 0; i < 32; ++i) {
+    msg.joints[i] = static_cast<float>(i);
+  }
+
+  if (state.threads() != 2) {
+    state.SkipWithError("BM_Latest_RobotState_RW requires exactly 2 threads (1 writer, 1 reader)");
+    return;
+  }
+
+  if (state.thread_index() == 0) {
+    RobotState out{};
+    std::int64_t ok = 0;
+    std::int64_t fail = 0;
+    for (auto _ : state) {
+      if (latest.try_read(out, 64)) {
+        ++ok;
+        benchmark::DoNotOptimize(out.tick);
+      } else {
+        ++fail;
+      }
+    }
+    // Only thread 0 reports counters to avoid framework summing across threads.
+    state.SetItemsProcessed(ok);
+    state.counters["read_fail"] = static_cast<double>(fail);
+  } else {
+    for (auto _ : state) {
+      msg.tick++;
+      latest.write(msg);
+      benchmark::DoNotOptimize(msg.tick);
+    }
+  }
+}
+
 static void BM_Ring_MPSC_Variable(benchmark::State& state) {
   auto& ring = ring_large();
   std::array<std::size_t, 4> sizes = {64, 256, 1024, 4096};
@@ -368,6 +467,9 @@ BENCHMARK(BM_Typed_MPSC_Trivial)->ThreadRange(2, 8)->UseRealTime();
 BENCHMARK(BM_Typed_MPSC_String)->ThreadRange(2, 8)->UseRealTime();
 BENCHMARK(BM_Typed_MPSC_RobotState)->ThreadRange(2, 8)->UseRealTime();
 BENCHMARK(BM_Typed_MPSC_RobotState_Burst)->ThreadRange(2, 8)->Arg(1)->Arg(8)->Arg(32)->Arg(128)->UseRealTime();
+BENCHMARK(BM_Latest_RobotState_Write)->UseRealTime();
+BENCHMARK(BM_Latest_RobotState_Read)->UseRealTime();
+BENCHMARK(BM_Latest_RobotState_RW)->Threads(2)->UseRealTime();
 BENCHMARK(BM_Ring_MPSC_Variable)->ThreadRange(2, 8)->UseRealTime();
 BENCHMARK(BM_Locked_MPSC_Small)->ThreadRange(2, 8)->UseRealTime();
 
