@@ -5,6 +5,7 @@ A C++20 lock-free ring buffer for shared-memory messaging. It supports **MPSC** 
 ## Features
 - MPSC lock-free ring buffer (shared memory via `mmap`).
 - MPMC lock-free ring buffer (shared memory via `mmap`).
+- `SharedLatest<T>` seqlock-style "latest value" for SWMR (single writer, many readers).
 - Variable-size payloads with a small record header (`size`, `type`, `flags`).
 - Global monotonic sequence number per record (for loss detection / diagnostics).
 - Cache-line padded control block to reduce false sharing.
@@ -12,7 +13,8 @@ A C++20 lock-free ring buffer for shared-memory messaging. It supports **MPSC** 
 
 ## Status / Roadmap
 - MPMC support: **implemented** (separate class).
-- Typed message helpers / serialization helpers: **planned**.
+- Typed message helpers / serialization helpers: **implemented**.
+- SPSC FIFO (dedicated implementation): **in progress**.
 - Windows shared-memory backend: **planned**.
 
 ## Build
@@ -92,6 +94,30 @@ int main() {
 }
 ```
 
+## Latest-Value Topics (SharedLatest)
+For robotics style "state/latest" topics (robot state, telemetry, latest command), FIFO is often the wrong semantic.
+`SharedLatest<T>` provides SWMR latest-value semantics with a seqlock-style counter so readers do not observe torn reads.
+```cpp
+#include "lf_ring/shared_latest.hpp"
+
+struct RobotState {
+  double x;
+  double y;
+  double yaw;
+  uint64_t stamp_ns;
+};
+
+int main() {
+  auto latest = lfring::SharedLatest<RobotState>::create("/tmp/robot_state.bin");
+  latest.write(RobotState{1.0, 2.0, 0.5, 123});
+
+  RobotState out{};
+  if (latest.try_read(out)) {
+    // out is a consistent snapshot
+  }
+}
+```
+
 ## Tests
 ```bash
 ctest --test-dir build
@@ -106,3 +132,4 @@ ctest --test-dir build
 - Linux/POSIX backend only (`mmap`, `open`, `ftruncate`).
 - Requires lock‑free 64‑bit atomics.
 - MPSC only: a single consumer thread/process must call `try_pop`.
+- SharedLatest is SWMR only (one writer; many readers). If the writer dies mid-write, readers may spin unless you cap retries.
