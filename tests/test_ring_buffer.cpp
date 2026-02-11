@@ -1,5 +1,6 @@
 #include "lf_ring/shared_ring_buffer.hpp"
 #include "lf_ring/shared_ring_buffer_mpmc.hpp"
+#include "lf_ring/shared_ring_buffer_spsc.hpp"
 
 #include <gtest/gtest.h>
 
@@ -129,6 +130,117 @@ TEST(SharedRingBufferMPMC, SequenceNumbers) {
   ASSERT_EQ(seq, 1u);
   ASSERT_TRUE(ring.try_pop(out, type, seq));
   ASSERT_EQ(seq, 2u);
+}
+
+TEST(SharedRingBufferSPSC, CreateOpenPushPop) {
+  TempFile tmp("lfring_spsc_basic");
+  auto ring = lfring::SharedRingBufferSPSC::create(tmp.path, 4096);
+
+  const char payload[] = "hello";
+  ASSERT_TRUE(ring.try_push(payload, sizeof(payload), 7));
+
+  std::vector<std::byte> out;
+  std::uint16_t type = 0;
+  ASSERT_TRUE(ring.try_pop(out, type));
+  ASSERT_EQ(type, 7u);
+  ASSERT_EQ(out.size(), sizeof(payload));
+  ASSERT_EQ(std::memcmp(out.data(), payload, sizeof(payload)), 0);
+
+  auto reopened = lfring::SharedRingBufferSPSC::open(tmp.path);
+  ASSERT_TRUE(reopened.try_push(payload, sizeof(payload), 9));
+  ASSERT_TRUE(reopened.try_pop(out, type));
+  ASSERT_EQ(type, 9u);
+}
+
+TEST(SharedRingBufferSPSC, WrapAround) {
+  TempFile tmp("lfring_spsc_wrap");
+  auto ring = lfring::SharedRingBufferSPSC::create(tmp.path, 256);
+
+  std::vector<std::byte> payload(60, std::byte{0x5});
+  std::uint16_t type = 0;
+  std::vector<std::byte> out;
+
+  for (int i = 0; i < 5; ++i) {
+    ASSERT_TRUE(ring.try_push(payload, static_cast<std::uint16_t>(i)));
+    ASSERT_TRUE(ring.try_pop(out, type));
+    ASSERT_EQ(type, static_cast<std::uint16_t>(i));
+  }
+}
+
+TEST(SharedRingBufferSPSC, SequenceNumbers) {
+  TempFile tmp("lfring_spsc_seq");
+  auto ring = lfring::SharedRingBufferSPSC::create(tmp.path, 4096);
+
+  const char payload[] = "seq";
+  ASSERT_TRUE(ring.try_push(payload, sizeof(payload), 1));
+  ASSERT_TRUE(ring.try_push(payload, sizeof(payload), 1));
+  ASSERT_TRUE(ring.try_push(payload, sizeof(payload), 1));
+
+  std::vector<std::byte> out;
+  std::uint16_t type = 0;
+  std::uint64_t seq = 0;
+
+  ASSERT_TRUE(ring.try_pop(out, type, seq));
+  ASSERT_EQ(seq, 1u);
+  ASSERT_TRUE(ring.try_pop(out, type, seq));
+  ASSERT_EQ(seq, 2u);
+  ASSERT_TRUE(ring.try_pop(out, type, seq));
+  ASSERT_EQ(seq, 3u);
+}
+
+TEST(SharedRingBufferSPSC, Stress) {
+  TempFile tmp("lfring_spsc_stress");
+  auto ring = lfring::SharedRingBufferSPSC::create(tmp.path, 1 << 20);
+
+  struct Message {
+    std::uint32_t sequence;
+  };
+
+  constexpr std::uint32_t total = 200000;
+  std::atomic<std::uint32_t> produced{0};
+  std::atomic<std::uint32_t> consumed{0};
+
+  std::thread consumer([&] {
+    std::vector<std::byte> out;
+    std::uint16_t type = 0;
+    std::uint32_t expected = 0;
+    auto start = std::chrono::steady_clock::now();
+    while (consumed.load(std::memory_order_relaxed) < total) {
+      if (ring.try_pop(out, type)) {
+        ASSERT_EQ(type, 3u);
+        ASSERT_EQ(out.size(), sizeof(Message));
+        Message msg{};
+        std::memcpy(&msg, out.data(), sizeof(Message));
+        ASSERT_EQ(msg.sequence, expected);
+        expected++;
+        consumed.fetch_add(1, std::memory_order_relaxed);
+      } else {
+        std::this_thread::yield();
+      }
+
+      auto now = std::chrono::steady_clock::now();
+      if (now - start > std::chrono::seconds(5)) {
+        break;
+      }
+    }
+  });
+
+  std::thread producer([&] {
+    for (std::uint32_t i = 0; i < total; ++i) {
+      Message msg{i};
+      std::span<const std::byte> data(reinterpret_cast<const std::byte*>(&msg), sizeof(msg));
+      while (!ring.try_push(data, 3)) {
+        std::this_thread::yield();
+      }
+      produced.fetch_add(1, std::memory_order_relaxed);
+    }
+  });
+
+  producer.join();
+  consumer.join();
+
+  ASSERT_EQ(produced.load(), total);
+  ASSERT_EQ(consumed.load(), total);
 }
 
 TEST(SharedRingBuffer, MPSCStress) {

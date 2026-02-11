@@ -1,5 +1,6 @@
 #include "lf_ring/shared_ring_buffer.hpp"
 #include "lf_ring/shared_latest.hpp"
+#include "lf_ring/shared_ring_buffer_spsc.hpp"
 #include "lf_ring/typed_message.hpp"
 
 #include <benchmark/benchmark.h>
@@ -102,6 +103,12 @@ lfring::SharedRingBuffer& ring_typed_robot() {
   return ring;
 }
 
+lfring::SharedRingBufferSPSC& ring_spsc_small() {
+  static TempFile tmp("lfring_bench_spsc_small");
+  static lfring::SharedRingBufferSPSC ring = lfring::SharedRingBufferSPSC::create(tmp.path, 1 << 20);
+  return ring;
+}
+
 lfring::SharedLatest<RobotState>& latest_robot() {
   static TempFile tmp("lfring_bench_latest_robot");
   static lfring::SharedLatest<RobotState> latest = lfring::SharedLatest<RobotState>::create(tmp.path);
@@ -175,6 +182,34 @@ static void BM_Ring_MPSC_Small(benchmark::State& state) {
   }
 
   SetBenchmarkCounters(state, static_cast<std::int64_t>(state.iterations()) * producers, producers);
+}
+
+static void BM_Ring_SPSC_Small(benchmark::State& state) {
+  auto& ring = ring_spsc_small();
+  auto payload = make_payload(32);
+  const int threads = static_cast<int>(state.threads());
+
+  if (threads != 2) {
+    state.SkipWithError("BM_Ring_SPSC_Small requires exactly 2 threads (1 producer, 1 consumer)");
+    return;
+  }
+
+  if (state.thread_index() == 0) {
+    std::vector<std::byte> out;
+    std::uint16_t type = 0;
+    for (auto _ : state) {
+      while (!ring.try_pop(out, type)) {
+        benchmark::DoNotOptimize(out.data());
+      }
+    }
+    state.SetItemsProcessed(static_cast<std::int64_t>(state.iterations()));
+  } else {
+    for (auto _ : state) {
+      while (!ring.try_push(payload, 1)) {
+        benchmark::DoNotOptimize(payload.data());
+      }
+    }
+  }
 }
 
 static void BM_Typed_MPSC_Trivial(benchmark::State& state) {
@@ -463,6 +498,7 @@ static void BM_Locked_MPSC_Small(benchmark::State& state) {
 } // namespace
 
 BENCHMARK(BM_Ring_MPSC_Small)->ThreadRange(2, 8)->UseRealTime();
+BENCHMARK(BM_Ring_SPSC_Small)->Threads(2)->UseRealTime();
 BENCHMARK(BM_Typed_MPSC_Trivial)->ThreadRange(2, 8)->UseRealTime();
 BENCHMARK(BM_Typed_MPSC_String)->ThreadRange(2, 8)->UseRealTime();
 BENCHMARK(BM_Typed_MPSC_RobotState)->ThreadRange(2, 8)->UseRealTime();

@@ -14,6 +14,7 @@ include(CTest)
 add_library(lf_ring
   src/shared_ring_buffer.cpp
   src/shared_ring_buffer_mpmc.cpp
+  src/shared_ring_buffer_spsc.cpp
   src/shared_memory_mapping.cpp
 )
 
