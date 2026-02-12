@@ -45,6 +45,7 @@ if (LF_RING_BUILD_TESTS)
   add_executable(lf_ring_tests
     tests/test_ring_buffer.cpp
     tests/test_typed_message.cpp
+    tests/test_spsc_queue.cpp
   )
   target_link_libraries(lf_ring_tests PRIVATE lf_ring gtest_main)
 
@@ -66,4 +67,18 @@ if (LF_RING_BUILD_BENCHMARKS)
     bench/benchmark_ring_buffer.cpp
   )
   target_link_libraries(lf_ring_bench PRIVATE lf_ring benchmark::benchmark)
+
+  option(LF_RING_BUILD_BOOST_BENCHMARKS "Build Boost.Lockfree comparison benchmarks" OFF)
+  if (LF_RING_BUILD_BOOST_BENCHMARKS)
+    find_package(Boost REQUIRED)
+    add_executable(lf_ring_bench_boost bench/benchmark_boost_lockfree.cpp)
+    target_link_libraries(lf_ring_bench_boost PRIVATE lf_ring Boost::headers benchmark::benchmark)
+  endif()
+
+  option(LF_RING_BUILD_LCM_BENCHMARKS "Build LCM comparison benchmarks" OFF)
+  if (LF_RING_BUILD_LCM_BENCHMARKS)
+    find_package(lcm REQUIRED)
+    add_executable(lf_ring_bench_lcm bench/benchmark_lcm.cpp)
+    target_link_libraries(lf_ring_bench_lcm PRIVATE lf_ring lcm benchmark::benchmark)
+  endif()
 endif()

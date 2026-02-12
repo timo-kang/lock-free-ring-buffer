@@ -1,6 +1,7 @@
 #include "lf_ring/shared_ring_buffer.hpp"
 #include "lf_ring/shared_latest.hpp"
 #include "lf_ring/shared_ring_buffer_spsc.hpp"
+#include "lf_ring/spsc_queue.hpp"
 #include "lf_ring/typed_message.hpp"
 
 #include <benchmark/benchmark.h>
@@ -542,6 +543,87 @@ static void BM_Locked_MPSC_Small(benchmark::State& state) {
   SetBenchmarkCounters(state, static_cast<std::int64_t>(state.iterations()) * producers, producers);
 }
 
+using SmallPayload = std::array<std::byte, 32>;
+
+lfring::SPSCQueue<SmallPayload, 32768>& fixed_spsc_small() {
+  static TempFile tmp("lfring_bench_fixed_spsc_small");
+  static auto q = lfring::SPSCQueue<SmallPayload, 32768>::create(tmp.path);
+  return q;
+}
+
+lfring::SPSCQueue<RobotState, 16384>& fixed_spsc_robot() {
+  static TempFile tmp("lfring_bench_fixed_spsc_robot");
+  static auto q = lfring::SPSCQueue<RobotState, 16384>::create(tmp.path);
+  return q;
+}
+
+static void BM_FixedSPSC_Small(benchmark::State& state) {
+  auto& q = fixed_spsc_small();
+
+  if (state.threads() != 2) {
+    state.SkipWithError("BM_FixedSPSC_Small requires exactly 2 threads");
+    return;
+  }
+
+  SmallPayload payload{};
+  std::memset(payload.data(), 0x5A, payload.size());
+
+  if (state.thread_index() == 0) {
+    SmallPayload out{};
+    for (auto _ : state) {
+      while (!q.try_pop(out)) {
+        benchmark::DoNotOptimize(out.data());
+      }
+    }
+    state.SetItemsProcessed(static_cast<std::int64_t>(state.iterations()));
+  } else {
+    for (auto _ : state) {
+      while (!q.try_push(payload)) {
+        benchmark::DoNotOptimize(payload.data());
+      }
+    }
+  }
+}
+
+static void BM_FixedSPSC_RobotState(benchmark::State& state) {
+  auto& q = fixed_spsc_robot();
+
+  if (state.threads() != 2) {
+    state.SkipWithError("BM_FixedSPSC_RobotState requires exactly 2 threads");
+    return;
+  }
+
+  RobotState msg{};
+  msg.tick = 123;
+  msg.id = 7;
+  msg.mode = 2;
+  msg.position[0] = 1.0;
+  msg.position[1] = 2.0;
+  msg.position[2] = 3.0;
+  msg.velocity[0] = 0.1;
+  msg.velocity[1] = 0.2;
+  msg.velocity[2] = 0.3;
+  for (int i = 0; i < 32; ++i) {
+    msg.joints[i] = static_cast<float>(i);
+  }
+
+  if (state.thread_index() == 0) {
+    RobotState out{};
+    for (auto _ : state) {
+      while (!q.try_pop(out)) {
+        benchmark::DoNotOptimize(out.tick);
+      }
+    }
+    state.SetItemsProcessed(static_cast<std::int64_t>(state.iterations()));
+  } else {
+    for (auto _ : state) {
+      while (!q.try_push(msg)) {
+        benchmark::DoNotOptimize(msg.tick);
+      }
+    }
+  }
+}
+
 } // namespace
 
 BENCHMARK(BM_Ring_MPSC_Small)->ThreadRange(2, 8)->UseRealTime();
@@ -556,5 +638,7 @@ BENCHMARK(BM_Latest_RobotState_Read)->UseRealTime();
 BENCHMARK(BM_Latest_RobotState_RW)->Threads(2)->UseRealTime();
 BENCHMARK(BM_Ring_MPSC_Variable)->ThreadRange(2, 8)->UseRealTime();
 BENCHMARK(BM_Locked_MPSC_Small)->ThreadRange(2, 8)->UseRealTime();
+BENCHMARK(BM_FixedSPSC_Small)->Threads(2)->UseRealTime();
+BENCHMARK(BM_FixedSPSC_RobotState)->Threads(2)->UseRealTime();
 
 BENCHMARK_MAIN();

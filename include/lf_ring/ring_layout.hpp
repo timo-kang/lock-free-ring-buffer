@@ -20,6 +20,7 @@ constexpr std::uint64_t kFlagMPSC = 0x1;
 constexpr std::uint64_t kFlagMPMC = 0x2;
 constexpr std::uint64_t kFlagSPSC = 0x4;
 constexpr std::uint64_t kFlagLatest = 0x8;
+constexpr std::uint64_t kFlagFixedSPSC = 0x10;
 
 constexpr std::size_t align_up(std::size_t value, std::size_t alignment) {
   return (value + alignment - 1) & ~(alignment - 1);
