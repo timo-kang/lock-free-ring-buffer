@@ -61,6 +61,12 @@ struct alignas(kCacheLineSize) PaddedAtomicU64 {
   PaddingBytes<kCacheLineSize - sizeof(std::atomic<std::uint64_t>)> padding;
 };
 
+// Field usage by type:
+//   MPSC/MPMC:    head_reserve, head_publish, tail_reserve, tail_publish, sequence
+//   SPSC (var):   head_reserve, head_publish, tail_reserve, tail_publish, sequence
+//   SPSCQueue:    head_publish, tail_publish
+//   SharedLatest: sequence (seqlock), head_reserve (heartbeat_ns),
+//                 tail_publish (futex notification counter for write_and_notify/wait_for_update)
 struct ControlBlock {
   PaddedAtomicU64 head_reserve;
   PaddedAtomicU64 head_publish;

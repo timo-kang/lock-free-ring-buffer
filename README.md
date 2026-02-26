@@ -14,7 +14,7 @@ A C++20 lock-free ring buffer for shared-memory messaging. It supports **MPSC** 
 ## Status / Roadmap
 - MPMC support: **implemented** (separate class).
 - Typed message helpers / serialization helpers: **implemented**.
-- SPSC FIFO (dedicated implementation): **in progress**.
+- SPSC FIFO (dedicated implementation): **implemented** (`SPSCQueue<T, Capacity>`).
 - Windows shared-memory backend: **planned**.
 
 ## Build
@@ -94,11 +94,31 @@ int main() {
 }
 ```
 
+## SPSC Queue (SPSCQueue)
+A fixed-size, typed single-producer single-consumer queue backed by shared memory:
+```cpp
+#include "lf_ring/spsc_queue.hpp"
+
+int main() {
+  auto q = lfring::SPSCQueue<std::uint64_t, 1024>::create("/tmp/spsc.bin");
+
+  q.try_push(42u);
+
+  std::uint64_t out = 0;
+  if (q.try_pop(out)) {
+    // out == 42
+  }
+}
+```
+
 ## Latest-Value Topics (SharedLatest)
 For robotics style "state/latest" topics (robot state, telemetry, latest command), FIFO is often the wrong semantic.
 `SharedLatest<T>` provides SWMR latest-value semantics with a seqlock-style counter so readers do not observe torn reads.
+
+The `ReadResult` overload of `try_read` can detect writer death — if the writer process dies mid-write, readers get `kWriterDead` instead of silently spinning:
 ```cpp
 #include "lf_ring/shared_latest.hpp"
+using namespace std::chrono_literals;
 
 struct RobotState {
   double x;
@@ -112,8 +132,24 @@ int main() {
   latest.write(RobotState{1.0, 2.0, 0.5, 123});
 
   RobotState out{};
+
+  // Simple read (backward compatible):
   if (latest.try_read(out)) {
     // out is a consistent snapshot
+  }
+
+  // Rich-status read with writer-death detection:
+  auto result = latest.try_read(out, /*dead_threshold=*/100ms);
+  switch (result) {
+    case lfring::ReadResult::kSuccess:    /* consistent snapshot */ break;
+    case lfring::ReadResult::kEmpty:      /* no data written yet */ break;
+    case lfring::ReadResult::kContended:  /* writer is mid-write, still alive */ break;
+    case lfring::ReadResult::kWriterDead: /* writer died mid-write */ break;
+  }
+
+  // Check liveness independently:
+  if (!latest.is_writer_alive(100ms)) {
+    // writer hasn't written in 100ms
   }
 }
 ```
@@ -132,4 +168,4 @@ ctest --test-dir build
 - Linux/POSIX backend only (`mmap`, `open`, `ftruncate`).
 - Requires lock‑free 64‑bit atomics.
 - MPSC only: a single consumer thread/process must call `try_pop`.
-- SharedLatest is SWMR only (one writer; many readers). If the writer dies mid-write, readers may spin unless you cap retries.
+- SharedLatest is SWMR only (one writer; many readers). Use the `ReadResult` overload of `try_read` to detect writer death via heartbeat checking.

@@ -18,7 +18,10 @@ add_library(lf_ring
   src/shared_memory_mapping.cpp
 )
 
-target_include_directories(lf_ring PUBLIC include)
+target_include_directories(lf_ring PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+)
 
 target_compile_features(lf_ring PUBLIC cxx_std_20)
 
@@ -31,6 +34,19 @@ endif()
 find_package(Threads REQUIRED)
 
 target_link_libraries(lf_ring PUBLIC Threads::Threads)
+
+# Install targets for use by external projects.
+include(GNUInstallDirs)
+install(TARGETS lf_ring EXPORT lf_ringTargets
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+)
+install(DIRECTORY include/lf_ring DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(EXPORT lf_ringTargets
+  FILE lf_ringConfig.cmake
+  NAMESPACE lf_ring::
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/lf_ring
+)
 
 if (LF_RING_BUILD_TESTS)
   include(FetchContent)
@@ -46,6 +62,7 @@ if (LF_RING_BUILD_TESTS)
     tests/test_ring_buffer.cpp
     tests/test_typed_message.cpp
     tests/test_spsc_queue.cpp
+    tests/test_shared_latest.cpp
   )
   target_link_libraries(lf_ring_tests PRIVATE lf_ring gtest_main)
 
@@ -68,6 +85,11 @@ if (LF_RING_BUILD_BENCHMARKS)
   )
   target_link_libraries(lf_ring_bench PRIVATE lf_ring benchmark::benchmark)
 
+  add_executable(lf_ring_bench_futex
+    bench/benchmark_futex.cpp
+  )
+  target_link_libraries(lf_ring_bench_futex PRIVATE lf_ring benchmark::benchmark)
+
   option(LF_RING_BUILD_BOOST_BENCHMARKS "Build Boost.Lockfree comparison benchmarks" OFF)
   if (LF_RING_BUILD_BOOST_BENCHMARKS)
     find_package(Boost REQUIRED)
@@ -81,4 +103,5 @@ if (LF_RING_BUILD_BENCHMARKS)
     add_executable(lf_ring_bench_lcm bench/benchmark_lcm.cpp)
     target_link_libraries(lf_ring_bench_lcm PRIVATE lf_ring lcm benchmark::benchmark)
   endif()
+
 endif()
