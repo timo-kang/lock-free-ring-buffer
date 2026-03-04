@@ -1,3 +1,17 @@
+# Copyright 2025 Jonghyeok Kang
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 cmake_minimum_required(VERSION 3.20)
 
 project(lock_free_ring_buf LANGUAGES CXX)
@@ -89,6 +103,11 @@ if (LF_RING_BUILD_BENCHMARKS)
     bench/benchmark_futex.cpp
   )
   target_link_libraries(lf_ring_bench_futex PRIVATE lf_ring benchmark::benchmark)
+
+  add_executable(lf_ring_bench_percentile
+    bench/benchmark_percentile.cpp
+  )
+  target_link_libraries(lf_ring_bench_percentile PRIVATE lf_ring)
 
   option(LF_RING_BUILD_BOOST_BENCHMARKS "Build Boost.Lockfree comparison benchmarks" OFF)
   if (LF_RING_BUILD_BOOST_BENCHMARKS)
