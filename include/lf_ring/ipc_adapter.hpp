@@ -96,7 +96,8 @@ public:
                                  const std::string& prefix = "lf",
                                  const std::filesystem::path& base_dir = detail::default_shm_dir())
       : path_(detail::topic_path(base_dir, prefix, topic)),
-        latest_(SharedLatest<T>::create(path_)) {}
+        last_claim_(ClaimResult::kCreated),
+        latest_(claim_init(path_, last_claim_)) {}
 
   void publish(const T& value) noexcept {
     latest_.write(value);
@@ -104,12 +105,20 @@ public:
 
   const std::filesystem::path& path() const noexcept { return path_; }
 
+  // How this publisher obtained ownership of the slot.
+  ClaimResult last_claim_result() const noexcept { return last_claim_; }
+
   // Expose raw SharedLatest for advanced use (e.g. is_writer_alive).
   SharedLatest<T>& raw() noexcept { return latest_; }
   const SharedLatest<T>& raw() const noexcept { return latest_; }
 
 private:
+  static SharedLatest<T> claim_init(const std::filesystem::path& p, ClaimResult& out) {
+    return SharedLatest<T>::claim(p, &out);
+  }
+
   std::filesystem::path path_;
+  ClaimResult last_claim_;
   SharedLatest<T> latest_;
 };
 
@@ -243,18 +252,25 @@ public:
                          const std::string& prefix = "lf",
                          const std::filesystem::path& base_dir = detail::default_shm_dir())
       : path_(detail::topic_path(base_dir, prefix, topic)),
-        queue_(SPSCQueue<T, Capacity>::create(path_)) {}
+        last_claim_(ClaimResult::kCreated),
+        queue_(claim_init(path_, last_claim_)) {}
 
   // Returns false if the queue is full.
   bool publish(const T& value) noexcept {
     return queue_.try_push(value);
   }
 
+  ClaimResult last_claim_result() const noexcept { return last_claim_; }
   const std::filesystem::path& path() const noexcept { return path_; }
   SPSCQueue<T, Capacity>& raw() noexcept { return queue_; }
 
 private:
+  static SPSCQueue<T, Capacity> claim_init(const std::filesystem::path& p, ClaimResult& out) {
+    return SPSCQueue<T, Capacity>::claim(p, &out);
+  }
+
   std::filesystem::path path_;
+  ClaimResult last_claim_;
   SPSCQueue<T, Capacity> queue_;
 };
 
@@ -354,7 +370,8 @@ public:
                              const std::string& prefix = "lf",
                              const std::filesystem::path& base_dir = detail::default_shm_dir())
       : path_(detail::topic_path(base_dir, prefix, topic)),
-        ring_(SharedRingBufferSPSC::create(path_, capacity_bytes)) {}
+        last_claim_(ClaimResult::kCreated),
+        ring_(claim_init(path_, capacity_bytes, last_claim_)) {}
 
   // Returns false if the ring buffer is full.
   bool publish(const void* data, std::uint32_t size, std::uint16_t type = 0) {
@@ -365,11 +382,18 @@ public:
     return ring_.try_push(data, type);
   }
 
+  ClaimResult last_claim_result() const noexcept { return last_claim_; }
   const std::filesystem::path& path() const noexcept { return path_; }
   SharedRingBufferSPSC& raw() noexcept { return ring_; }
 
 private:
+  static SharedRingBufferSPSC claim_init(const std::filesystem::path& p,
+                                         std::size_t cap, ClaimResult& out) {
+    return SharedRingBufferSPSC::claim(p, cap, &out);
+  }
+
   std::filesystem::path path_;
+  ClaimResult last_claim_;
   SharedRingBufferSPSC ring_;
 };
 

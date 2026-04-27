@@ -281,6 +281,173 @@ TEST(SharedLatest, ReadResultContended) {
 // Futex notification tests
 // ═══════════════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════════════
+// Crash recovery tests (claim)
+// ═══════════════════════════════════════════════════════════════════════
+
+TEST(SharedLatestClaim, CreateNewFile) {
+  TempFile tmp("sl_claim_create");
+  // File does not exist — claim should create it.
+  lfring::ClaimResult result{};
+  auto sl = lfring::SharedLatest<std::uint64_t>::claim(tmp.path, &result);
+  ASSERT_EQ(result, lfring::ClaimResult::kCreated);
+
+  // Should work like a freshly created SharedLatest.
+  sl.write(42u);
+  std::uint64_t out = 0;
+  ASSERT_TRUE(sl.try_read(out));
+  ASSERT_EQ(out, 42u);
+}
+
+TEST(SharedLatestClaim, ResumeCleanShutdown) {
+  TempFile tmp("sl_claim_resume");
+  // Create and write normally, then destroy the writer.
+  {
+    auto sl = lfring::SharedLatest<std::uint64_t>::create(tmp.path);
+    sl.write(99u);
+  }
+
+  // Claim the same file — seq is even (clean shutdown).
+  lfring::ClaimResult result{};
+  auto sl = lfring::SharedLatest<std::uint64_t>::claim(tmp.path, &result);
+  ASSERT_EQ(result, lfring::ClaimResult::kResumed);
+
+  // Previous data should still be readable.
+  std::uint64_t out = 0;
+  ASSERT_TRUE(sl.try_read(out));
+  ASSERT_EQ(out, 99u);
+
+  // New writes should work.
+  sl.write(100u);
+  ASSERT_TRUE(sl.try_read(out));
+  ASSERT_EQ(out, 100u);
+}
+
+TEST(SharedLatestClaim, RecoverFromDeadWriter) {
+  TempFile tmp("sl_claim_recover");
+
+  // Simulate writer death: create, write (sets heartbeat), sleep, set seq odd.
+  {
+    auto sl = lfring::SharedLatest<std::uint64_t>::create(tmp.path);
+    sl.write(42u);
+  }
+
+  // Sleep to make heartbeat stale.
+  std::this_thread::sleep_for(20ms);
+
+  // Manually set sequence to odd via raw mmap (simulates crash mid-write).
+  {
+    auto file_size = lfring::SharedLatest<std::uint64_t>::required_mapping_size();
+    int fd = ::open(tmp.path.c_str(), O_RDWR);
+    ASSERT_GE(fd, 0);
+    void* mem = ::mmap(nullptr, file_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    ASSERT_NE(mem, MAP_FAILED);
+    auto* hdr = static_cast<lfring::Header*>(mem);
+    auto* ctrl = reinterpret_cast<lfring::ControlBlock*>(
+        static_cast<std::byte*>(mem) + hdr->control_offset);
+    ctrl->sequence.value.store(3, std::memory_order_release); // odd = mid-write
+    ::munmap(mem, file_size);
+    ::close(fd);
+  }
+
+  // Claim should detect death and recover.
+  lfring::ClaimResult result{};
+  auto sl = lfring::SharedLatest<std::uint64_t>::claim(tmp.path, &result, 1ms);
+  ASSERT_EQ(result, lfring::ClaimResult::kRecovered);
+
+  // After recovery, sequence should be 0 (reset).
+  ASSERT_EQ(sl.raw_sequence(), 0u);
+
+  // Readers should see kEmpty.
+  std::uint64_t out = 999;
+  auto read_result = sl.try_read(out, std::chrono::seconds{1});
+  ASSERT_EQ(read_result, lfring::ReadResult::kEmpty);
+
+  // New writes should work normally.
+  sl.write(77u);
+  ASSERT_EQ(sl.raw_sequence(), 2u); // 0 → 1 → 2
+  ASSERT_TRUE(sl.try_read(out));
+  ASSERT_EQ(out, 77u);
+}
+
+TEST(SharedLatestClaim, RejectLiveWriter) {
+  TempFile tmp("sl_claim_reject_live");
+  auto sl = lfring::SharedLatest<std::uint64_t>::create(tmp.path);
+  sl.write(42u);
+
+  // Set seq to odd but keep heartbeat fresh (simulates a slow writer, not dead).
+  {
+    auto file_size = lfring::SharedLatest<std::uint64_t>::required_mapping_size();
+    int fd = ::open(tmp.path.c_str(), O_RDWR);
+    ASSERT_GE(fd, 0);
+    void* mem = ::mmap(nullptr, file_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    ASSERT_NE(mem, MAP_FAILED);
+    auto* hdr = static_cast<lfring::Header*>(mem);
+    auto* ctrl = reinterpret_cast<lfring::ControlBlock*>(
+        static_cast<std::byte*>(mem) + hdr->control_offset);
+    ctrl->sequence.value.store(3, std::memory_order_release);
+    // Heartbeat is already fresh from the write above.
+    ::munmap(mem, file_size);
+    ::close(fd);
+  }
+
+  // Claim should throw — heartbeat is fresh, writer appears alive.
+  ASSERT_THROW(
+      lfring::SharedLatest<std::uint64_t>::claim(tmp.path, nullptr, 10s),
+      std::runtime_error);
+}
+
+TEST(SharedLatestClaim, RecoverAndReadFromSeparateProcess) {
+  TempFile tmp("sl_claim_xproc");
+
+  // Parent creates and simulates writer death.
+  {
+    auto sl = lfring::SharedLatest<std::uint64_t>::create(tmp.path);
+    sl.write(42u);
+  }
+
+  std::this_thread::sleep_for(20ms);
+
+  // Set seq odd via raw mmap.
+  {
+    auto file_size = lfring::SharedLatest<std::uint64_t>::required_mapping_size();
+    int fd = ::open(tmp.path.c_str(), O_RDWR);
+    ASSERT_GE(fd, 0);
+    void* mem = ::mmap(nullptr, file_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    ASSERT_NE(mem, MAP_FAILED);
+    auto* hdr = static_cast<lfring::Header*>(mem);
+    auto* ctrl = reinterpret_cast<lfring::ControlBlock*>(
+        static_cast<std::byte*>(mem) + hdr->control_offset);
+    ctrl->sequence.value.store(5, std::memory_order_release);
+    ::munmap(mem, file_size);
+    ::close(fd);
+  }
+
+  pid_t pid = fork();
+  ASSERT_NE(pid, -1) << "fork() failed";
+
+  if (pid == 0) {
+    // Child: claim (recover), write new data, exit.
+    lfring::ClaimResult result{};
+    auto sl = lfring::SharedLatest<std::uint64_t>::claim(tmp.path, &result, 1ms);
+    if (result != lfring::ClaimResult::kRecovered) _exit(1);
+    sl.write_and_notify(123u);
+    _exit(0);
+  }
+
+  // Parent: wait for child to recover and write.
+  int status = 0;
+  ASSERT_EQ(waitpid(pid, &status, 0), pid);
+  ASSERT_TRUE(WIFEXITED(status));
+  ASSERT_EQ(WEXITSTATUS(status), 0);
+
+  // Parent opens as reader — should see the child's data.
+  auto reader = lfring::SharedLatest<std::uint64_t>::open(tmp.path);
+  std::uint64_t out = 0;
+  ASSERT_TRUE(reader.try_read(out));
+  ASSERT_EQ(out, 123u);
+}
+
 TEST(SharedLatestFutex, NotifyCounterIncrementsOnWrite) {
   TempFile tmp("sl_futex_counter");
   auto sl = lfring::SharedLatest<std::uint64_t>::create(tmp.path);

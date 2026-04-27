@@ -33,6 +33,27 @@ SharedRingBufferSPSC SharedRingBufferSPSC::open(const std::filesystem::path& pat
   return SharedRingBufferSPSC(detail::open_mapping(path, kFlagSPSC));
 }
 
+SharedRingBufferSPSC SharedRingBufferSPSC::claim(const std::filesystem::path& path,
+                                                  std::size_t capacity_bytes,
+                                                  ClaimResult* result_out) {
+  if (!std::filesystem::exists(path)) {
+    if (result_out) *result_out = ClaimResult::kCreated;
+    return SharedRingBufferSPSC(detail::create_mapping(path, capacity_bytes, kFlagSPSC));
+  }
+
+  auto mapping = detail::open_mapping(path, kFlagSPSC);
+
+  // Sync tail_reserve to tail_publish in case the writer crashed between
+  // the two stores. Not strictly required (push reads tail_publish, not
+  // tail_reserve), but keeps the control block consistent.
+  auto* control = mapping.control;
+  std::uint64_t tp = control->tail_publish.value.load(std::memory_order_acquire);
+  control->tail_reserve.value.store(tp, std::memory_order_release);
+
+  if (result_out) *result_out = ClaimResult::kResumed;
+  return SharedRingBufferSPSC(std::move(mapping));
+}
+
 bool SharedRingBufferSPSC::try_push(const void* data, std::uint32_t size, std::uint16_t type) {
   if (data == nullptr && size != 0) {
     return false;

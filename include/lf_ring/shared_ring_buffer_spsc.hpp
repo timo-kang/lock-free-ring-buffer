@@ -34,6 +34,13 @@ public:
   static SharedRingBufferSPSC create(const std::filesystem::path& path, std::size_t capacity_bytes);
   static SharedRingBufferSPSC open(const std::filesystem::path& path);
 
+  // Claims ownership, creating the file or resuming from an existing one.
+  // Committed messages are preserved; any in-flight write from a dead producer
+  // is invisible (tail_publish was not yet advanced).
+  static SharedRingBufferSPSC claim(const std::filesystem::path& path,
+                                    std::size_t capacity_bytes,
+                                    ClaimResult* result_out = nullptr);
+
   SharedRingBufferSPSC(SharedRingBufferSPSC&& other) noexcept;
   SharedRingBufferSPSC& operator=(SharedRingBufferSPSC&& other) noexcept;
   SharedRingBufferSPSC(const SharedRingBufferSPSC&) = delete;

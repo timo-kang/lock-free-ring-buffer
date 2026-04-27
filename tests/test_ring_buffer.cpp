@@ -405,3 +405,60 @@ TEST(SharedRingBufferMPMC, MPmcStress) {
     ASSERT_EQ(seen[i].load(std::memory_order_relaxed), 1u) << "missing or duplicate id " << i;
   }
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// SharedRingBufferSPSC claim tests
+// ═══════════════════════════════════════════════════════════════════════
+
+TEST(SharedRingBufferSPSCClaim, CreateNewFile) {
+  TempFile tmp("spsc_byte_claim_create");
+  lfring::ClaimResult result{};
+  auto ring = lfring::SharedRingBufferSPSC::claim(tmp.path, 4096, &result);
+  ASSERT_EQ(result, lfring::ClaimResult::kCreated);
+
+  const char payload[] = "hello";
+  ASSERT_TRUE(ring.try_push(payload, sizeof(payload), 1));
+
+  std::vector<std::byte> out;
+  std::uint16_t type = 0;
+  ASSERT_TRUE(ring.try_pop(out, type));
+  ASSERT_EQ(type, 1);
+  ASSERT_EQ(std::memcmp(out.data(), payload, sizeof(payload)), 0);
+}
+
+TEST(SharedRingBufferSPSCClaim, ResumePreservesCommittedMessages) {
+  TempFile tmp("spsc_byte_claim_resume");
+
+  // Producer pushes messages and then "dies".
+  {
+    auto ring = lfring::SharedRingBufferSPSC::create(tmp.path, 4096);
+    const char m1[] = "alpha";
+    const char m2[] = "beta";
+    ASSERT_TRUE(ring.try_push(m1, sizeof(m1), 1));
+    ASSERT_TRUE(ring.try_push(m2, sizeof(m2), 2));
+  }
+
+  // New producer claims the same file.
+  lfring::ClaimResult result{};
+  auto ring = lfring::SharedRingBufferSPSC::claim(tmp.path, 4096, &result);
+  ASSERT_EQ(result, lfring::ClaimResult::kResumed);
+
+  // Committed messages should still be consumable.
+  std::vector<std::byte> out;
+  std::uint16_t type = 0;
+  ASSERT_TRUE(ring.try_pop(out, type));
+  ASSERT_EQ(type, 1);
+  ASSERT_EQ(std::memcmp(out.data(), "alpha", 6), 0);
+
+  ASSERT_TRUE(ring.try_pop(out, type));
+  ASSERT_EQ(type, 2);
+  ASSERT_EQ(std::memcmp(out.data(), "beta", 5), 0);
+
+  ASSERT_FALSE(ring.try_pop(out, type));
+
+  // New pushes should work.
+  const char m3[] = "gamma";
+  ASSERT_TRUE(ring.try_push(m3, sizeof(m3), 3));
+  ASSERT_TRUE(ring.try_pop(out, type));
+  ASSERT_EQ(type, 3);
+}

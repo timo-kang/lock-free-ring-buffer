@@ -62,6 +62,29 @@ public:
     return SPSCQueue(std::move(mapping));
   }
 
+  // Claims ownership of a SPSCQueue slot, creating the file or resuming from an existing one.
+  //
+  // Unlike SharedLatest, SPSCQueue does not need sequence reset or ring cleanup on recovery:
+  // try_push() advances tail_publish only AFTER memcpy completes, so a crash mid-push leaves
+  // the in-flight slot invisible to the consumer. Committed messages are preserved.
+  static SPSCQueue claim(const std::filesystem::path& path,
+                         ClaimResult* result_out = nullptr) {
+    if (!std::filesystem::exists(path)) {
+      if (result_out) *result_out = ClaimResult::kCreated;
+      return SPSCQueue(detail::create_mapping(path, Capacity * sizeof(T), kFlagFixedSPSC));
+    }
+
+    auto mapping = detail::open_mapping(path, kFlagFixedSPSC);
+    if (mapping.capacity != Capacity * sizeof(T)) {
+      throw std::runtime_error(
+          "SPSCQueue::claim capacity mismatch: file has " + std::to_string(mapping.capacity) +
+          " bytes, expected " + std::to_string(Capacity * sizeof(T)));
+    }
+
+    if (result_out) *result_out = ClaimResult::kResumed;
+    return SPSCQueue(std::move(mapping));
+  }
+
   SPSCQueue(SPSCQueue&& other) noexcept = default;
   SPSCQueue& operator=(SPSCQueue&& other) noexcept = default;
   SPSCQueue(const SPSCQueue&) = delete;

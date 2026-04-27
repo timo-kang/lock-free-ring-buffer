@@ -56,6 +56,79 @@ public:
     return SharedLatest(detail::open_mapping(path, kFlagLatest));
   }
 
+  // Claims ownership of a SharedLatest slot, creating the file or recovering from a dead writer.
+  //
+  // Behavior:
+  //   - File does not exist    → create new file, return kCreated.
+  //   - File exists, seq even  → take over cleanly, return kResumed.
+  //   - File exists, seq odd   → confirm writer death via heartbeat, then:
+  //       - heartbeat fresh    → throw (live writer detected, SWMR violation).
+  //       - heartbeat stale    → CAS heartbeat to claim ownership, clear torn ring data,
+  //                               reset seq to 0, wake futex waiters, return kRecovered.
+  //       - CAS fails          → throw (another process won the recovery race).
+  //
+  // After claim() succeeds, the caller is the sole writer. Readers will see kEmpty until the
+  // first write() call.
+  static SharedLatest claim(const std::filesystem::path& path,
+                            ClaimResult* result_out = nullptr,
+                            std::chrono::nanoseconds dead_threshold = std::chrono::milliseconds{500}) {
+    if (!std::filesystem::exists(path)) {
+      if (result_out) *result_out = ClaimResult::kCreated;
+      return SharedLatest(detail::create_mapping(path, sizeof(T), kFlagLatest));
+    }
+
+    auto mapping = detail::open_mapping(path, kFlagLatest);
+    auto* control = mapping.control;
+    auto& seq = control->sequence.value;
+    auto& hb = control->head_reserve.value;
+
+    std::uint64_t s = seq.load(std::memory_order_acquire);
+
+    if ((s & 1u) == 0u) {
+      // Even or zero — previous writer exited cleanly or never wrote.
+      hb.store(now_ns(), std::memory_order_release);
+      if (result_out) *result_out = ClaimResult::kResumed;
+      return SharedLatest(std::move(mapping));
+    }
+
+    // Odd — previous writer died mid-write.
+    std::uint64_t old_hb = hb.load(std::memory_order_acquire);
+    std::uint64_t now = now_ns();
+
+    // If heartbeat is fresh and non-zero, a live writer exists.
+    if (old_hb != 0u &&
+        (now - old_hb) < static_cast<std::uint64_t>(dead_threshold.count())) {
+      throw std::runtime_error(
+          "SharedLatest::claim: live writer detected (heartbeat is fresh)");
+    }
+
+    // CAS heartbeat to atomically claim ownership. Prevents two processes
+    // from recovering the same slot simultaneously.
+    if (!hb.compare_exchange_strong(old_hb, now,
+                                    std::memory_order_acq_rel,
+                                    std::memory_order_acquire)) {
+      throw std::runtime_error(
+          "SharedLatest::claim: another process claimed ownership first");
+    }
+
+    // Clear torn ring data. Safe because seq is odd — readers never read
+    // ring data when seq is odd (they spin-wait or report kWriterDead).
+    std::memset(mapping.ring, 0, mapping.capacity);
+
+    // Reset sequence to 0. Readers will see kEmpty, which is semantically
+    // correct: "no valid data from the new writer yet."
+    seq.store(0, std::memory_order_release);
+
+    // Wake any futex waiters so they can re-evaluate (they were blocked
+    // waiting for the dead writer's notification).
+    auto& notify = control->tail_publish.value;
+    notify.fetch_add(1, std::memory_order_release);
+    detail::futex_wake_all(notify);
+
+    if (result_out) *result_out = ClaimResult::kRecovered;
+    return SharedLatest(std::move(mapping));
+  }
+
   SharedLatest(SharedLatest&& other) noexcept = default;
   SharedLatest& operator=(SharedLatest&& other) noexcept = default;
   SharedLatest(const SharedLatest&) = delete;

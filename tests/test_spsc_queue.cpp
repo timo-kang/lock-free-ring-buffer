@@ -233,3 +233,58 @@ TEST(SPSCQueue, OpenCapacityMismatch) {
       (lfring::SPSCQueue<std::uint32_t, 32>::open(tmp.path)),
       std::runtime_error);
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// Claim (crash recovery) tests
+// ═══════════════════════════════════════════════════════════════════════
+
+TEST(SPSCQueueClaim, CreateNewFile) {
+  TempFile tmp("spscq_claim_create");
+  lfring::ClaimResult result{};
+  auto q = lfring::SPSCQueue<std::uint64_t, 16>::claim(tmp.path, &result);
+  ASSERT_EQ(result, lfring::ClaimResult::kCreated);
+  ASSERT_TRUE(q.empty());
+
+  ASSERT_TRUE(q.try_push(42u));
+  std::uint64_t out = 0;
+  ASSERT_TRUE(q.try_pop(out));
+  ASSERT_EQ(out, 42u);
+}
+
+TEST(SPSCQueueClaim, ResumePreservesCommittedMessages) {
+  TempFile tmp("spscq_claim_resume");
+
+  // Producer pushes 3 messages and then "dies" (destructor runs).
+  {
+    auto q = lfring::SPSCQueue<std::uint64_t, 16>::create(tmp.path);
+    ASSERT_TRUE(q.try_push(10u));
+    ASSERT_TRUE(q.try_push(20u));
+    ASSERT_TRUE(q.try_push(30u));
+  }
+
+  // New producer claims the same file.
+  lfring::ClaimResult result{};
+  auto q = lfring::SPSCQueue<std::uint64_t, 16>::claim(tmp.path, &result);
+  ASSERT_EQ(result, lfring::ClaimResult::kResumed);
+
+  // Committed messages should still be consumable.
+  std::uint64_t out = 0;
+  ASSERT_TRUE(q.try_pop(out)); ASSERT_EQ(out, 10u);
+  ASSERT_TRUE(q.try_pop(out)); ASSERT_EQ(out, 20u);
+  ASSERT_TRUE(q.try_pop(out)); ASSERT_EQ(out, 30u);
+  ASSERT_FALSE(q.try_pop(out));
+
+  // New pushes should work.
+  ASSERT_TRUE(q.try_push(40u));
+  ASSERT_TRUE(q.try_pop(out));
+  ASSERT_EQ(out, 40u);
+}
+
+TEST(SPSCQueueClaim, ClaimCapacityMismatch) {
+  TempFile tmp("spscq_claim_mismatch");
+  lfring::SPSCQueue<std::uint32_t, 16>::create(tmp.path);
+
+  ASSERT_THROW(
+      (lfring::SPSCQueue<std::uint32_t, 32>::claim(tmp.path)),
+      std::runtime_error);
+}

@@ -102,4 +102,11 @@ inline std::size_t required_mapping_size(std::size_t capacity_bytes) {
   return header_region_size() + control_region_size() + cap;
 }
 
+// Result of a claim() operation on any shared-memory primitive.
+enum class ClaimResult : std::uint8_t {
+  kCreated,    // new shared memory file was created
+  kResumed,    // existing file, previous writer exited cleanly
+  kRecovered,  // existing file, recovered from dead writer
+};
+
 } // namespace lfring
